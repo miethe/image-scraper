@@ -5,13 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Image Scraper</title>
     <style>
-        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 600px; margin: auto; }
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 90%; margin: auto; }
         label { display: block; margin-bottom: 5px; }
-        input[type="url"] { width: 100%; padding: 8px; margin-bottom: 15px; box-sizing: border-box; }
-        button { padding: 10px 15px; cursor: pointer; }
-        #message { margin-top: 20px; padding: 10px; background-color: #e0e0e0; border-radius: 4px; display: none; }
+        input[type="url"] { width: calc(100% - 100px); padding: 8px; margin-bottom: 15px; box-sizing: border-box; display: inline-block; }
+        button { padding: 9px 15px; cursor: pointer; display: inline-block; vertical-align: top; }
+        #message { margin-top: 10px; margin-bottom: 15px; padding: 10px; background-color: #e0e0e0; border-radius: 4px; display: none; }
         #message.success { background-color: #d4edda; color: #155724; }
         #message.error { background-color: #f8d7da; color: #721c24; }
+        #image-gallery {
+            margin-top: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px; /* Spacing between images */
+            border-top: 1px solid #ccc;
+            padding-top: 20px;
+        }
+        #image-gallery img {
+            max-width: 150px; /* Limit image preview size */
+            height: 100px;    /* Fixed height */
+            object-fit: contain; /* Scale while preserving aspect ratio */
+            border: 1px solid #eee;
+            border-radius: 4px;
+            background-color: #f8f8f8; /* Background for transparent images */
+            opacity: 0; /* Start invisible for animation */
+            transform: scale(0.8); /* Start slightly smaller */
+            animation: fadeInScale 0.5s ease-out forwards; /* Apply animation */
+        }
+
+        @keyframes fadeInScale {
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        #loading-indicator {
+            display: none; /* Hidden by default */
+            margin-left: 10px;
+            font-style: italic;
+            color: #555;
+        }
     </style>
 </head>
 <body>
@@ -19,54 +52,142 @@
     <form id="scrape-form">
         <label for="url">Website URL:</label>
         <input type="url" id="url" name="url" placeholder="https://example.com" required>
-        <button type="submit">Start Scraping</button>
+        <button type="submit" id="submit-button">Start Scraping</button>
+        <span id="loading-indicator">Scraping in progress...</span>
     </form>
     <div id="message"></div>
+
+    <h2>Collected Images:</h2>
+    <div id="image-gallery">
+        <!-- Images will be added here dynamically -->
+    </div>
 
     <script>
         const form = document.getElementById('scrape-form');
         const urlInput = document.getElementById('url');
         const messageDiv = document.getElementById('message');
+        const gallery = document.getElementById('image-gallery');
+        const submitButton = document.getElementById('submit-button');
+        const loadingIndicator = document.getElementById('loading-indicator');
+
+        let eventSource = null; // Keep track of the current EventSource
 
         form.addEventListener('submit', async (event) => {
-            event.preventDefault(); // Prevent default form submission
-            messageDiv.style.display = 'none'; // Hide previous messages
-            messageDiv.className = ''; // Reset classes
+            event.preventDefault();
+            messageDiv.style.display = 'none';
+            gallery.innerHTML = ''; // Clear previous gallery results
+            loadingIndicator.style.display = 'none'; // Hide loader initially
+            submitButton.disabled = true; // Disable button during request
+
+            // --- Close existing EventSource if any ---
+            if (eventSource) {
+                console.log("Closing previous SSE connection.");
+                eventSource.close();
+                eventSource = null;
+            }
+            // -----------------------------------------
 
             const url = urlInput.value;
             if (!url) {
                 showMessage('Please enter a URL.', 'error');
+                submitButton.disabled = false;
                 return;
             }
 
             try {
                 const response = await fetch('/scrape', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url: url }),
                 });
 
                 const result = await response.json();
 
                 if (response.ok && response.status === 202) {
-                    showMessage(`Scraping started for ${result.url}. Check logs or data directory for progress.`, 'success');
-                    urlInput.value = ''; // Clear input on success
+                    showMessage(`Scraping started for ${result.url}. Waiting for images...`, 'success');
+                    loadingIndicator.style.display = 'inline'; // Show loader
+                    // Don't clear input here, user might want to reference it
+                    // urlInput.value = '';
+                    connectToStream(); // Start listening for image updates
                 } else {
-                    showMessage(`Error: ${result.error || 'Unknown error'} (Status: ${response.status})`, 'error');
+                    showMessage(`Error starting scrape: ${result.error || 'Unknown server error'} (Status: ${response.status})`, 'error');
+                    submitButton.disabled = false; // Re-enable button on error
                 }
             } catch (error) {
-                console.error('Fetch Error:', error);
+                console.error('Scrape Request Error:', error);
                 showMessage(`Network error or server unavailable: ${error.message}`, 'error');
+                submitButton.disabled = false; // Re-enable button on error
             }
         });
+
+        function connectToStream() {
+            console.log("Connecting to SSE stream at /stream");
+            eventSource = new EventSource('/stream');
+
+            eventSource.onopen = () => {
+                console.log("SSE Connection opened.");
+                // No images yet, but connection is working
+            };
+
+            eventSource.onmessage = (event) => {
+                const imageUrl = event.data;
+                console.log("SSE message received:", imageUrl);
+                addImageToGallery(imageUrl);
+            };
+
+            // Listen for the custom 'end-stream' event
+            eventSource.addEventListener('end-stream', (event) => {
+                console.log("SSE end-stream event received:", event.data);
+                showMessage('Scraping finished.', 'success');
+                loadingIndicator.style.display = 'none'; // Hide loader
+                submitButton.disabled = false; // Re-enable button
+                if (eventSource) {
+                    eventSource.close();
+                    eventSource = null;
+                    console.log("SSE connection closed by end-stream event.");
+                }
+            });
+
+            eventSource.onerror = (err) => {
+                console.error("SSE Error:", err);
+                // Handle specific errors or just close
+                if (eventSource) {
+                     // Check readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
+                     if (eventSource.readyState === EventSource.CLOSED) {
+                         console.log("SSE connection was already closed.");
+                         showMessage('Stream connection closed.', 'error');
+                     } else if (eventSource.readyState === EventSource.CONNECTING) {
+                         console.log("SSE connection failed to open or was interrupted.");
+                         showMessage('Stream connection failed. Maybe server stopped?', 'error');
+                     } else {
+                          showMessage('An error occurred with the image stream.', 'error');
+                     }
+                    eventSource.close(); // Close the connection on error
+                    eventSource = null;
+                }
+                loadingIndicator.style.display = 'none'; // Hide loader
+                submitButton.disabled = false; // Re-enable button
+            };
+        }
+
+        function addImageToGallery(imageUrl) {
+            const img = document.createElement('img');
+            img.src = imageUrl;
+            img.alt = "Scraped Image"; // Basic alt text
+            img.onerror = () => { // Handle cases where image fails to load
+                console.warn(`Failed to load image: ${imageUrl}`);
+                img.alt = "Failed to load";
+                img.style.border = "1px dashed red"; // Indicate error visually
+            };
+            gallery.appendChild(img);
+        }
 
         function showMessage(msg, type) {
             messageDiv.textContent = msg;
             messageDiv.className = type; // 'success' or 'error'
             messageDiv.style.display = 'block';
         }
+
     </script>
 </body>
 </html>
