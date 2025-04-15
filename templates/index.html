@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Scraper</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 600px; margin: auto; }
+        label { display: block; margin-bottom: 5px; }
+        input[type="url"] { width: 100%; padding: 8px; margin-bottom: 15px; box-sizing: border-box; }
+        button { padding: 10px 15px; cursor: pointer; }
+        #message { margin-top: 20px; padding: 10px; background-color: #e0e0e0; border-radius: 4px; display: none; }
+        #message.success { background-color: #d4edda; color: #155724; }
+        #message.error { background-color: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <h1>Image Scraper</h1>
+    <form id="scrape-form">
+        <label for="url">Website URL:</label>
+        <input type="url" id="url" name="url" placeholder="https://example.com" required>
+        <button type="submit">Start Scraping</button>
+    </form>
+    <div id="message"></div>
+
+    <script>
+        const form = document.getElementById('scrape-form');
+        const urlInput = document.getElementById('url');
+        const messageDiv = document.getElementById('message');
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault(); // Prevent default form submission
+            messageDiv.style.display = 'none'; // Hide previous messages
+            messageDiv.className = ''; // Reset classes
+
+            const url = urlInput.value;
+            if (!url) {
+                showMessage('Please enter a URL.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/scrape', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: url }),
+                });
+
+                const result = await response.json();
+
+                if (response.ok && response.status === 202) {
+                    showMessage(`Scraping started for ${result.url}. Check logs or data directory for progress.`, 'success');
+                    urlInput.value = ''; // Clear input on success
+                } else {
+                    showMessage(`Error: ${result.error || 'Unknown error'} (Status: ${response.status})`, 'error');
+                }
+            } catch (error) {
+                console.error('Fetch Error:', error);
+                showMessage(`Network error or server unavailable: ${error.message}`, 'error');
+            }
+        });
+
+        function showMessage(msg, type) {
+            messageDiv.textContent = msg;
+            messageDiv.className = type; // 'success' or 'error'
+            messageDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>

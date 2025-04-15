@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  image-scraper:
+    build: .
+    container_name: image-scraper-app
+    ports:
+      - "5000:5000" # Map host port 5000 to container port 5000
+    volumes:
+      # Mount local ./data directory to /app/data inside the container
+      # This persists downloaded images on your host machine
+      - ./data:/app/data
+      # Optional: Mount code for development (reflects changes without rebuilding)
+      # Be careful with this in 'production' as it bypasses the image build
+      # - .:/app
+    environment:
+      # Optional: Override environment variables defined in Dockerfile or set new ones
+      - FLASK_ENV=production # Set Flask env (optional, Flask detects it's not interactive)
+      - MAX_PAGES=100 # Example: Override max pages
+      - OUTPUT_DIR=/app/data # Ensure it matches the volume mount point
+    # restart: unless-stopped # Optional: Restart policy
