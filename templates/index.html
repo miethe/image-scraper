@@ -3,63 +3,466 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Scraper</title>
+    <title>Image Scraper - Extract Images from Any Website</title>
     <style>
-        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 90%; margin: auto; }
-        label { display: block; margin-bottom: 5px; }
-        input[type="url"] { width: calc(100% - 100px); padding: 8px; margin-bottom: 15px; box-sizing: border-box; display: inline-block; }
-        button { padding: 9px 15px; cursor: pointer; display: inline-block; vertical-align: top; }
-        #message { margin-top: 10px; margin-bottom: 15px; padding: 10px; background-color: #e0e0e0; border-radius: 4px; display: none; }
-        #message.success { background-color: #d4edda; color: #155724; }
-        #message.error { background-color: #f8d7da; color: #721c24; }
-        #image-gallery {
-            margin-top: 20px;
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px; /* Spacing between images */
-            border-top: 1px solid #ccc;
-            padding-top: 20px;
-        }
-        #image-gallery img {
-            max-width: 150px; /* Limit image preview size */
-            height: 100px;    /* Fixed height */
-            object-fit: contain; /* Scale while preserving aspect ratio */
-            border: 1px solid #eee;
-            border-radius: 4px;
-            background-color: #f8f8f8; /* Background for transparent images */
-            opacity: 0; /* Start invisible for animation */
-            transform: scale(0.8); /* Start slightly smaller */
-            animation: fadeInScale 0.5s ease-out forwards; /* Apply animation */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
 
-        @keyframes fadeInScale {
+        :root {
+            --primary-color: #4f46e5;
+            --primary-hover: #4338ca;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --bg-color: #f9fafb;
+            --card-bg: #ffffff;
+            --text-primary: #111827;
+            --text-secondary: #6b7280;
+            --border-color: #e5e7eb;
+            --shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: var(--text-primary);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: var(--shadow-lg);
+            margin-bottom: 30px;
+        }
+
+        .scrape-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            flex: 1;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        input[type="url"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: all 0.3s;
+        }
+
+        input[type="url"]:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-primary {
+            background: var(--primary-color);
+            color: white;
+            align-self: flex-end;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-hover);
+            transform: translateY(-1px);
+            box-shadow: var(--shadow);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: var(--text-secondary);
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: var(--text-primary);
+        }
+
+        .message {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .message.success {
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid var(--success-color);
+        }
+
+        .message.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid var(--error-color);
+        }
+
+        .message.info {
+            background: #dbeafe;
+            color: #1e40af;
+            border-left: 4px solid var(--primary-color);
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateY(-10px);
+                opacity: 0;
+            }
             to {
+                transform: translateY(0);
                 opacity: 1;
-                transform: scale(1);
             }
         }
 
-        #loading-indicator {
-            display: none; /* Hidden by default */
-            margin-left: 10px;
-            font-style: italic;
-            color: #555;
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .loading-indicator {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            color: var(--primary-color);
+            margin-bottom: 20px;
+        }
+
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(79, 70, 229, 0.3);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .gallery-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .gallery-header h2 {
+            font-size: 1.5rem;
+            color: var(--text-primary);
+        }
+
+        .gallery-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .view-toggle {
+            display: flex;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .view-toggle button {
+            padding: 8px 16px;
+            border: none;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .view-toggle button.active {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        #image-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        #image-gallery.list-view {
+            grid-template-columns: 1fr;
+        }
+
+        .image-item {
+            position: relative;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            transition: all 0.3s;
+            opacity: 0;
+            animation: fadeInUp 0.5s ease-out forwards;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .image-item:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .image-wrapper {
+            width: 100%;
+            padding-top: 75%;
+            position: relative;
+            background: var(--bg-color);
+        }
+
+        .list-view .image-wrapper {
+            padding-top: 0;
+            height: 150px;
+        }
+
+        .image-item img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            padding: 10px;
+        }
+
+        .image-overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0,0,0,0.7), transparent);
+            padding: 10px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .image-item:hover .image-overlay {
+            opacity: 1;
+        }
+
+        .image-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .image-actions a {
+            padding: 6px 12px;
+            background: white;
+            color: var(--text-primary);
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            transition: all 0.3s;
+        }
+
+        .image-actions a:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .scrape-form {
+                flex-direction: column;
+            }
+
+            .btn-primary {
+                align-self: stretch;
+            }
+
+            #image-gallery {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 15px;
+            }
         }
     </style>
 </head>
 <body>
-    <h1>Image Scraper</h1>
-    <form id="scrape-form">
-        <label for="url">Website URL:</label>
-        <input type="url" id="url" name="url" placeholder="https://example.com" required>
-        <button type="submit" id="submit-button">Start Scraping</button>
-        <span id="loading-indicator">Scraping in progress...</span>
-    </form>
-    <div id="message"></div>
+    <div class="container">
+        <div class="header">
+            <h1>🖼️ Image Scraper</h1>
+            <p>Extract high-quality images from any website in real-time</p>
+        </div>
 
-    <h2>Collected Images:</h2>
-    <div id="image-gallery">
-        <!-- Images will be added here dynamically -->
+        <div class="card">
+            <form id="scrape-form" class="scrape-form">
+                <div class="form-group">
+                    <label for="url">Website URL</label>
+                    <input
+                        type="url"
+                        id="url"
+                        name="url"
+                        placeholder="https://example.com"
+                        required
+                        autocomplete="url"
+                    >
+                </div>
+                <button type="submit" id="submit-button" class="btn btn-primary">
+                    <span id="button-text">Start Scraping</span>
+                </button>
+            </form>
+
+            <div id="message" class="message"></div>
+
+            <div id="loading-indicator" class="loading-indicator">
+                <div class="spinner"></div>
+                <span>Scraping in progress... Discovering images</span>
+            </div>
+
+            <div id="stats-container" style="display: none;">
+                <div class="stats">
+                    <div class="stat-card">
+                        <span class="stat-value" id="image-count">0</span>
+                        <span class="stat-label">Images Found</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-value" id="status-text">Ready</span>
+                        <span class="stat-label">Status</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="gallery-header">
+                <h2>Collected Images</h2>
+                <div class="gallery-controls">
+                    <div class="view-toggle">
+                        <button type="button" id="grid-view" class="active" title="Grid View">
+                            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M1 2.5A1.5 1.5 0 0 1 2.5 1h3A1.5 1.5 0 0 1 7 2.5v3A1.5 1.5 0 0 1 5.5 7h-3A1.5 1.5 0 0 1 1 5.5v-3zm8 0A1.5 1.5 0 0 1 10.5 1h3A1.5 1.5 0 0 1 15 2.5v3A1.5 1.5 0 0 1 13.5 7h-3A1.5 1.5 0 0 1 9 5.5v-3zm-8 8A1.5 1.5 0 0 1 2.5 9h3A1.5 1.5 0 0 1 7 10.5v3A1.5 1.5 0 0 1 5.5 15h-3A1.5 1.5 0 0 1 1 13.5v-3zm8 0A1.5 1.5 0 0 1 10.5 9h3a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 13.5v-3z"/>
+                            </svg>
+                        </button>
+                        <button type="button" id="list-view" title="List View">
+                            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                <path fill-rule="evenodd" d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="image-gallery">
+                <div class="empty-state">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    <p>No images yet. Enter a URL and start scraping!</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -68,29 +471,54 @@
         const messageDiv = document.getElementById('message');
         const gallery = document.getElementById('image-gallery');
         const submitButton = document.getElementById('submit-button');
+        const buttonText = document.getElementById('button-text');
         const loadingIndicator = document.getElementById('loading-indicator');
+        const statsContainer = document.getElementById('stats-container');
+        const imageCountEl = document.getElementById('image-count');
+        const statusTextEl = document.getElementById('status-text');
+        const gridViewBtn = document.getElementById('grid-view');
+        const listViewBtn = document.getElementById('list-view');
 
-        let eventSource = null; // Keep track of the current EventSource
+        let eventSource = null;
+        let imageCount = 0;
+
+        // View toggle
+        gridViewBtn.addEventListener('click', () => {
+            gallery.classList.remove('list-view');
+            gridViewBtn.classList.add('active');
+            listViewBtn.classList.remove('active');
+        });
+
+        listViewBtn.addEventListener('click', () => {
+            gallery.classList.add('list-view');
+            listViewBtn.classList.add('active');
+            gridViewBtn.classList.remove('active');
+        });
 
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
-            messageDiv.style.display = 'none';
-            gallery.innerHTML = ''; // Clear previous gallery results
-            loadingIndicator.style.display = 'none'; // Hide loader initially
-            submitButton.disabled = true; // Disable button during request
 
-            // --- Close existing EventSource if any ---
+            // Reset state
+            messageDiv.style.display = 'none';
+            gallery.innerHTML = '';
+            imageCount = 0;
+            updateStats();
+            submitButton.disabled = true;
+            buttonText.textContent = 'Scraping...';
+            statsContainer.style.display = 'block';
+            statusTextEl.textContent = 'Starting';
+
+            // Close existing EventSource
             if (eventSource) {
                 console.log("Closing previous SSE connection.");
                 eventSource.close();
                 eventSource = null;
             }
-            // -----------------------------------------
 
-            const url = urlInput.value;
+            const url = urlInput.value.trim();
             if (!url) {
                 showMessage('Please enter a URL.', 'error');
-                submitButton.disabled = false;
+                resetForm();
                 return;
             }
 
@@ -104,19 +532,18 @@
                 const result = await response.json();
 
                 if (response.ok && response.status === 202) {
-                    showMessage(`Scraping started for ${result.url}. Waiting for images...`, 'success');
-                    loadingIndicator.style.display = 'inline'; // Show loader
-                    // Don't clear input here, user might want to reference it
-                    // urlInput.value = '';
-                    connectToStream(); // Start listening for image updates
+                    showMessage(`Scraping ${result.url}. Watch images appear below!`, 'success');
+                    loadingIndicator.style.display = 'flex';
+                    statusTextEl.textContent = 'Crawling';
+                    connectToStream();
                 } else {
-                    showMessage(`Error starting scrape: ${result.error || 'Unknown server error'} (Status: ${response.status})`, 'error');
-                    submitButton.disabled = false; // Re-enable button on error
+                    showMessage(`Error: ${result.error || 'Unknown server error'}`, 'error');
+                    resetForm();
                 }
             } catch (error) {
                 console.error('Scrape Request Error:', error);
-                showMessage(`Network error or server unavailable: ${error.message}`, 'error');
-                submitButton.disabled = false; // Re-enable button on error
+                showMessage(`Network error: ${error.message}`, 'error');
+                resetForm();
             }
         });
 
@@ -126,68 +553,101 @@
 
             eventSource.onopen = () => {
                 console.log("SSE Connection opened.");
-                // No images yet, but connection is working
+                statusTextEl.textContent = 'Connected';
             };
 
             eventSource.onmessage = (event) => {
                 const imageUrl = event.data;
                 console.log("SSE message received:", imageUrl);
                 addImageToGallery(imageUrl);
+                imageCount++;
+                updateStats();
+                statusTextEl.textContent = 'Downloading';
             };
 
-            // Listen for the custom 'end-stream' event
             eventSource.addEventListener('end-stream', (event) => {
                 console.log("SSE end-stream event received:", event.data);
-                showMessage('Scraping finished.', 'success');
-                loadingIndicator.style.display = 'none'; // Hide loader
-                submitButton.disabled = false; // Re-enable button
+                showMessage(`Scraping complete! Found ${imageCount} images.`, 'success');
+                loadingIndicator.style.display = 'none';
+                statusTextEl.textContent = 'Complete';
+                resetForm();
                 if (eventSource) {
                     eventSource.close();
                     eventSource = null;
-                    console.log("SSE connection closed by end-stream event.");
                 }
             });
 
             eventSource.onerror = (err) => {
                 console.error("SSE Error:", err);
-                // Handle specific errors or just close
-                if (eventSource) {
-                     // Check readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
-                     if (eventSource.readyState === EventSource.CLOSED) {
-                         console.log("SSE connection was already closed.");
-                         showMessage('Stream connection closed.', 'error');
-                     } else if (eventSource.readyState === EventSource.CONNECTING) {
-                         console.log("SSE connection failed to open or was interrupted.");
-                         showMessage('Stream connection failed. Maybe server stopped?', 'error');
-                     } else {
-                          showMessage('An error occurred with the image stream.', 'error');
-                     }
-                    eventSource.close(); // Close the connection on error
+                if (eventSource && eventSource.readyState !== EventSource.OPEN) {
+                    showMessage('Connection interrupted. Results may be incomplete.', 'error');
+                    loadingIndicator.style.display = 'none';
+                    statusTextEl.textContent = 'Error';
+                    resetForm();
+                    eventSource.close();
                     eventSource = null;
                 }
-                loadingIndicator.style.display = 'none'; // Hide loader
-                submitButton.disabled = false; // Re-enable button
             };
         }
 
         function addImageToGallery(imageUrl) {
+            const item = document.createElement('div');
+            item.className = 'image-item';
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'image-wrapper';
+
             const img = document.createElement('img');
             img.src = imageUrl;
-            img.alt = "Scraped Image"; // Basic alt text
-            img.onerror = () => { // Handle cases where image fails to load
+            img.alt = "Scraped Image";
+            img.loading = "lazy";
+
+            img.onerror = () => {
                 console.warn(`Failed to load image: ${imageUrl}`);
                 img.alt = "Failed to load";
-                img.style.border = "1px dashed red"; // Indicate error visually
+                img.style.opacity = "0.3";
             };
-            gallery.appendChild(img);
+
+            const overlay = document.createElement('div');
+            overlay.className = 'image-overlay';
+
+            const actions = document.createElement('div');
+            actions.className = 'image-actions';
+
+            const viewLink = document.createElement('a');
+            viewLink.href = imageUrl;
+            viewLink.target = '_blank';
+            viewLink.textContent = 'View';
+
+            const downloadLink = document.createElement('a');
+            downloadLink.href = imageUrl;
+            downloadLink.download = '';
+            downloadLink.textContent = 'Download';
+
+            actions.appendChild(viewLink);
+            actions.appendChild(downloadLink);
+            overlay.appendChild(actions);
+
+            wrapper.appendChild(img);
+            item.appendChild(wrapper);
+            item.appendChild(overlay);
+            gallery.appendChild(item);
+        }
+
+        function updateStats() {
+            imageCountEl.textContent = imageCount;
         }
 
         function showMessage(msg, type) {
             messageDiv.textContent = msg;
-            messageDiv.className = type; // 'success' or 'error'
+            messageDiv.className = `message ${type}`;
             messageDiv.style.display = 'block';
         }
 
+        function resetForm() {
+            submitButton.disabled = false;
+            buttonText.textContent = 'Start Scraping';
+        }
     </script>
 </body>
 </html>
