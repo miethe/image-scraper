@@ -514,6 +514,10 @@
                         <option value="3">3+ (Very deep)</option>
                     </select>
                 </div>
+                <div class="form-group-small" style="display: flex; align-items: center; padding-top: 28px;">
+                    <input type="checkbox" id="use-browser" name="use_browser" style="width: auto; height: 18px; margin-right: 8px;">
+                    <label for="use-browser" style="margin-bottom: 0; font-weight: 500; cursor: pointer;" title="Enable browser automation for JavaScript-heavy sites with interactive galleries (e.g., Wix Pro Gallery). Slower but captures dynamically loaded images.">Browser Mode</label>
+                </div>
                 <button type="submit" id="submit-button" class="btn btn-primary">
                     <span id="button-text">Start Scraping</span>
                 </button>
@@ -728,6 +732,7 @@
 
             const url = urlInput.value.trim();
             const depth = parseInt(depthSelect.value);
+            const useBrowser = document.getElementById('use-browser').checked;
 
             if (!url) {
                 showMessage('Please enter a URL.', 'error');
@@ -739,7 +744,7 @@
                 const response = await fetch('/scrape', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url, depth: depth }),
+                    body: JSON.stringify({ url: url, depth: depth, use_browser: useBrowser }),
                 });
 
                 const result = await response.json();

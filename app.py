@@ -65,6 +65,14 @@ def handle_scrape_request():
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid depth value"}), 400
 
+    # Get use_browser parameter (default to False)
+    use_browser = data.get('use_browser', False)
+    if not isinstance(use_browser, bool):
+        try:
+            use_browser = str(use_browser).lower() in ('true', '1', 'yes')
+        except:
+            use_browser = False
+
     # Basic URL validation (very simple)
     if not url_to_scrape.startswith(('http://', 'https://')):
          if '.' not in url_to_scrape: # Very basic check if it looks like a domain
@@ -78,16 +86,16 @@ def handle_scrape_request():
 
     # Run scraping in a background thread to avoid blocking the request
     # For production, consider a proper task queue (Celery, RQ)
-    logging.info(f"Received scrape request for: {url_to_scrape} (depth: {scrape_depth})")
+    logging.info(f"Received scrape request for: {url_to_scrape} (depth: {scrape_depth}, use_browser: {use_browser})")
     thread = threading.Thread(
         target=run_scrape_background,
-        args=(url_to_scrape, app.config['OUTPUT_DIR'], image_update_queue, IMAGE_SERVE_PATH, app.config['MAX_PAGES'], scrape_depth, control)
+        args=(url_to_scrape, app.config['OUTPUT_DIR'], image_update_queue, IMAGE_SERVE_PATH, app.config['MAX_PAGES'], scrape_depth, control, use_browser)
     )
     thread.start()
 
     return jsonify({"message": "Scraping process started. Updates will stream.", "url": url_to_scrape}), 202 # Status 202 Accepted
 
-def run_scrape_background(url, output_dir, update_queue, base_serve_path, max_pages, depth, control):
+def run_scrape_background(url, output_dir, update_queue, base_serve_path, max_pages, depth, control, use_browser=False):
     """Wrapper function to run scrape_site and handle results/errors in background."""
     logging.info(f"Background thread started for {url}")
     try:
@@ -102,7 +110,8 @@ def run_scrape_background(url, output_dir, update_queue, base_serve_path, max_pa
             follow_pagination=True, # Explicitly True as intended
             max_pages=max_pages,
             depth=depth,
-            control=control
+            control=control,
+            use_browser=use_browser
         )
         logging.info(f"Background thread finished for {url}. Saved {count} images to {output_path}")
     except Exception as e:

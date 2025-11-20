@@ -10,6 +10,7 @@ from collections import deque
 import logging
 from queue import Queue
 import threading
+from interactive_scraper import scrape_interactive_images
 
 # --- Configuration ---
 # Consider moving these to env variables or a config file
@@ -188,7 +189,7 @@ def get_image_hash(content):
     return hashlib.sha256(content).hexdigest()
 
 # --- Main Scraping Function ---
-def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_image_serve_path="/images", follow_pagination=True, max_pages=MAX_PAGES_TO_CRAWL, depth=1, control: ScrapeControl = None):
+def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_image_serve_path="/images", follow_pagination=True, max_pages=MAX_PAGES_TO_CRAWL, depth=1, control: ScrapeControl = None, use_browser=False):
     """
     Scrapes a website starting from start_url for images.
 
@@ -201,6 +202,7 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
         max_pages (int): Maximum number of pages to crawl.
         depth (int): Maximum link depth to follow (0=start page only, 1=start+direct links, etc.)
         control (ScrapeControl, optional): Control object for pause/stop functionality.
+        use_browser (bool): Whether to use browser automation for JavaScript-heavy sites and interactive galleries.
     """
     if not start_url.startswith(('http://', 'https://')):
         start_url = 'https://' + start_url
@@ -223,6 +225,59 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
     session.headers.update({"User-Agent": USER_AGENT})
     pages_crawled = 0
     total_images_downloaded = 0 # Keep track of count
+
+    # Use browser automation if requested (for JavaScript-heavy sites)
+    if use_browser:
+        logging.info(f"Using browser automation to scrape interactive content from: {start_url}")
+        try:
+            interactive_images = scrape_interactive_images(start_url, headless=True)
+            logging.info(f"Browser automation found {len(interactive_images)} images")
+
+            # Process and download the images found via browser
+            for img_url in interactive_images:
+                if control and control.wait_if_paused():
+                    logging.info("Scraping stopped by user during browser automation")
+                    break
+
+                if img_url in found_image_srcs:
+                    continue
+                found_image_srcs.add(img_url)
+
+                # Download and save the image
+                img_content, final_url = try_get_high_res_image(img_url, session)
+                if img_content:
+                    img_hash = get_image_hash(img_content)
+                    if img_hash not in downloaded_image_hashes:
+                        downloaded_image_hashes.add(img_hash)
+
+                        # Determine filename
+                        parsed_img_url = urlparse(final_url if final_url else img_url)
+                        img_filename = os.path.basename(parsed_img_url.path)
+                        if not img_filename or '.' not in img_filename:
+                            img_filename = f"image_{img_hash[:8]}.jpg"
+
+                        # Save image
+                        img_filepath = os.path.join(domain_output_path, img_filename)
+                        counter = 1
+                        base_name, ext = os.path.splitext(img_filename)
+                        while os.path.exists(img_filepath):
+                            img_filepath = os.path.join(domain_output_path, f"{base_name}_{counter}{ext}")
+                            counter += 1
+
+                        with open(img_filepath, 'wb') as img_file:
+                            img_file.write(img_content)
+
+                        total_images_downloaded += 1
+                        logging.info(f"[Browser] Downloaded image {total_images_downloaded}: {img_filename}")
+
+                        # Queue for SSE if available
+                        if image_update_queue:
+                            served_url = f"{base_image_serve_path}/{base_domain}/{os.path.basename(img_filepath)}"
+                            image_update_queue.put(served_url)
+
+        except Exception as e:
+            logging.error(f"Error during browser automation: {e}")
+            logging.info("Continuing with standard scraping...")
 
     try:
         while urls_to_visit and pages_crawled < max_pages:
