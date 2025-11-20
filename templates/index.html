@@ -69,10 +69,15 @@
             display: flex;
             gap: 10px;
             margin-bottom: 20px;
+            align-items: flex-end;
         }
 
         .form-group {
             flex: 1;
+        }
+
+        .form-group-small {
+            flex: 0 0 150px;
         }
 
         label {
@@ -82,16 +87,17 @@
             color: var(--text-primary);
         }
 
-        input[type="url"] {
+        input[type="url"], select {
             width: 100%;
             padding: 12px 16px;
             border: 2px solid var(--border-color);
             border-radius: 8px;
             font-size: 1rem;
             transition: all 0.3s;
+            background: white;
         }
 
-        input[type="url"]:focus {
+        input[type="url"]:focus, select:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
@@ -134,6 +140,34 @@
 
         .btn-secondary:hover {
             background: var(--text-primary);
+        }
+
+        .btn-warning {
+            background: var(--warning-color);
+            color: white;
+        }
+
+        .btn-warning:hover {
+            background: #d97706;
+        }
+
+        .btn-danger {
+            background: var(--error-color);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .control-buttons {
+            display: none;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .control-buttons.active {
+            display: flex;
         }
 
         .message {
@@ -369,6 +403,64 @@
             opacity: 0.5;
         }
 
+        /* Image Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            animation: fadeIn 0.3s;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+            animation: zoomIn 0.3s;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 35px;
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        .modal-close:hover {
+            color: #bbb;
+        }
+
+        .modal-download {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes zoomIn {
+            from { transform: scale(0.8); }
+            to { transform: scale(1); }
+        }
+
         @media (max-width: 768px) {
             .header h1 {
                 font-size: 2rem;
@@ -385,6 +477,10 @@
             #image-gallery {
                 grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
                 gap: 15px;
+            }
+
+            .form-group-small {
+                flex: 1;
             }
         }
     </style>
@@ -409,10 +505,25 @@
                         autocomplete="url"
                     >
                 </div>
+                <div class="form-group-small">
+                    <label for="depth">Crawl Depth</label>
+                    <select id="depth" name="depth">
+                        <option value="0">0 (Page only)</option>
+                        <option value="1" selected>1 (+ Links)</option>
+                        <option value="2">2 (Deep)</option>
+                        <option value="3">3+ (Very deep)</option>
+                    </select>
+                </div>
                 <button type="submit" id="submit-button" class="btn btn-primary">
                     <span id="button-text">Start Scraping</span>
                 </button>
             </form>
+
+            <div id="control-buttons" class="control-buttons">
+                <button type="button" id="pause-button" class="btn btn-warning">Pause</button>
+                <button type="button" id="resume-button" class="btn btn-secondary" style="display: none;">Resume</button>
+                <button type="button" id="stop-button" class="btn btn-danger">Stop</button>
+            </div>
 
             <div id="message" class="message"></div>
 
@@ -439,6 +550,14 @@
             <div class="gallery-header">
                 <h2>Collected Images</h2>
                 <div class="gallery-controls">
+                    <select id="filetype-filter" title="Filter by file type">
+                        <option value="all">All Types</option>
+                        <option value="jpg">JPG</option>
+                        <option value="png">PNG</option>
+                        <option value="gif">GIF</option>
+                        <option value="webp">WebP</option>
+                        <option value="svg">SVG</option>
+                    </select>
                     <div class="view-toggle">
                         <button type="button" id="grid-view" class="active" title="Grid View">
                             <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
@@ -465,9 +584,17 @@
         </div>
     </div>
 
+    <!-- Image Modal -->
+    <div id="image-modal" class="modal">
+        <span class="modal-close">&times;</span>
+        <img class="modal-content" id="modal-image">
+        <a id="modal-download-btn" class="btn btn-primary modal-download" download>Download Image</a>
+    </div>
+
     <script>
         const form = document.getElementById('scrape-form');
         const urlInput = document.getElementById('url');
+        const depthSelect = document.getElementById('depth');
         const messageDiv = document.getElementById('message');
         const gallery = document.getElementById('image-gallery');
         const submitButton = document.getElementById('submit-button');
@@ -478,9 +605,19 @@
         const statusTextEl = document.getElementById('status-text');
         const gridViewBtn = document.getElementById('grid-view');
         const listViewBtn = document.getElementById('list-view');
+        const filetypeFilter = document.getElementById('filetype-filter');
+        const controlButtons = document.getElementById('control-buttons');
+        const pauseButton = document.getElementById('pause-button');
+        const resumeButton = document.getElementById('resume-button');
+        const stopButton = document.getElementById('stop-button');
+        const modal = document.getElementById('image-modal');
+        const modalImg = document.getElementById('modal-image');
+        const modalClose = document.querySelector('.modal-close');
+        const modalDownloadBtn = document.getElementById('modal-download-btn');
 
         let eventSource = null;
         let imageCount = 0;
+        let allImages = []; // Store all image data for filtering
 
         // View toggle
         gridViewBtn.addEventListener('click', () => {
@@ -493,6 +630,69 @@
             gallery.classList.add('list-view');
             listViewBtn.classList.add('active');
             gridViewBtn.classList.remove('active');
+        });
+
+        // Filetype filter
+        filetypeFilter.addEventListener('change', () => {
+            filterImages();
+        });
+
+        // Control buttons
+        pauseButton.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/scrape/pause', { method: 'POST' });
+                if (response.ok) {
+                    pauseButton.style.display = 'none';
+                    resumeButton.style.display = 'inline-flex';
+                    showMessage('Scraping paused', 'info');
+                    statusTextEl.textContent = 'Paused';
+                }
+            } catch (error) {
+                console.error('Pause error:', error);
+            }
+        });
+
+        resumeButton.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/scrape/resume', { method: 'POST' });
+                if (response.ok) {
+                    resumeButton.style.display = 'none';
+                    pauseButton.style.display = 'inline-flex';
+                    showMessage('Scraping resumed', 'info');
+                    statusTextEl.textContent = 'Crawling';
+                }
+            } catch (error) {
+                console.error('Resume error:', error);
+            }
+        });
+
+        stopButton.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/scrape/stop', { method: 'POST' });
+                if (response.ok) {
+                    showMessage('Scraping stopped', 'info');
+                    statusTextEl.textContent = 'Stopped';
+                    controlButtons.classList.remove('active');
+                    resetForm();
+                    if (eventSource) {
+                        eventSource.close();
+                        eventSource = null;
+                    }
+                }
+            } catch (error) {
+                console.error('Stop error:', error);
+            }
+        });
+
+        // Modal controls
+        modalClose.addEventListener('click', () => {
+            modal.classList.remove('active');
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.classList.remove('active');
+            }
         });
 
         form.addEventListener('submit', async (event) => {
@@ -509,11 +709,15 @@
                 </div>
             `;
             imageCount = 0;
+            allImages = [];
             updateStats();
             submitButton.disabled = true;
             buttonText.textContent = 'Scraping...';
             statsContainer.style.display = 'block';
             statusTextEl.textContent = 'Starting';
+            controlButtons.classList.add('active');
+            pauseButton.style.display = 'inline-flex';
+            resumeButton.style.display = 'none';
 
             // Close existing EventSource
             if (eventSource) {
@@ -523,6 +727,8 @@
             }
 
             const url = urlInput.value.trim();
+            const depth = parseInt(depthSelect.value);
+
             if (!url) {
                 showMessage('Please enter a URL.', 'error');
                 resetForm();
@@ -533,7 +739,7 @@
                 const response = await fetch('/scrape', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url }),
+                    body: JSON.stringify({ url: url, depth: depth }),
                 });
 
                 const result = await response.json();
@@ -598,16 +804,22 @@
         }
 
         function addImageToGallery(imageUrl) {
+            const filename = imageUrl.split('/').pop().split('?')[0] || 'image';
+            const ext = filename.split('.').pop().toLowerCase();
+
+            // Store image data for filtering
+            const imageData = { url: imageUrl, filename: filename, ext: ext };
+            allImages.push(imageData);
+
             const item = document.createElement('div');
             item.className = 'image-item';
+            item.dataset.filetype = ext;
 
             const wrapper = document.createElement('div');
             wrapper.className = 'image-wrapper';
 
             const img = document.createElement('img');
             img.src = imageUrl;
-            // Extract filename from imageUrl for better accessibility
-            const filename = imageUrl.split('/').pop().split('?')[0];
             img.alt = `Scraped image: ${filename}`;
             img.loading = "lazy";
 
@@ -623,19 +835,22 @@
             const actions = document.createElement('div');
             actions.className = 'image-actions';
 
-            const viewLink = document.createElement('a');
-            viewLink.href = imageUrl;
-            viewLink.target = '_blank';
-            viewLink.rel = 'noopener noreferrer';
-            viewLink.textContent = 'View';
+            // View button opens modal
+            const viewBtn = document.createElement('a');
+            viewBtn.href = '#';
+            viewBtn.textContent = 'View';
+            viewBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                openModal(imageUrl, filename);
+            });
 
+            // Download button downloads image
             const downloadLink = document.createElement('a');
             downloadLink.href = imageUrl;
-            const filename = imageUrl.split('/').pop().split('?')[0] || 'image';
             downloadLink.download = filename;
             downloadLink.textContent = 'Download';
 
-            actions.appendChild(viewLink);
+            actions.appendChild(viewBtn);
             actions.appendChild(downloadLink);
             overlay.appendChild(actions);
 
@@ -643,6 +858,27 @@
             item.appendChild(wrapper);
             item.appendChild(overlay);
             gallery.appendChild(item);
+        }
+
+        function openModal(imageUrl, filename) {
+            modalImg.src = imageUrl;
+            modalDownloadBtn.href = imageUrl;
+            modalDownloadBtn.download = filename;
+            modal.classList.add('active');
+        }
+
+        function filterImages() {
+            const selectedType = filetypeFilter.value;
+            const items = gallery.querySelectorAll('.image-item');
+
+            items.forEach(item => {
+                const filetype = item.dataset.filetype;
+                if (selectedType === 'all' || filetype === selectedType) {
+                    item.style.display = '';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
         }
 
         function updateStats() {
@@ -658,6 +894,7 @@
         function resetForm() {
             submitButton.disabled = false;
             buttonText.textContent = 'Start Scraping';
+            controlButtons.classList.remove('active');
         }
     </script>
 </body>

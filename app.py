@@ -4,7 +4,7 @@ import time
 import queue
 from flask import Flask, request, jsonify, render_template, send_from_directory, Response, stream_with_context
 from dotenv import load_dotenv
-from scraper import scrape_site, logging # Import the logger too
+from scraper import scrape_site, logging, ScrapeControl # Import the logger and control class
 from urllib.parse import unquote # To decode filenames from URL
 
 load_dotenv() # Load environment variables from .env file if it exists
@@ -24,6 +24,10 @@ os.makedirs(app.config['OUTPUT_DIR'], exist_ok=True)
 # Thread-safe queue for SSE updates
 image_update_queue = queue.Queue()
 
+# Global scrape control (for pause/stop functionality)
+current_scrape_control = None
+control_lock = threading.Lock()
+
 # --- Routes ---
 
 @app.route('/', methods=['GET'])
@@ -34,6 +38,8 @@ def index():
 @app.route('/scrape', methods=['POST'])
 def handle_scrape_request():
     """API endpoint to trigger scraping."""
+    global current_scrape_control
+
     # --- Clear the queue for a new request ---
     while not image_update_queue.empty():
         try:
@@ -41,7 +47,7 @@ def handle_scrape_request():
         except queue.Empty:
             break
     logging.info("Cleared image update queue for new request.")
-    
+
     data = request.get_json()
     if not data or 'url' not in data:
         return jsonify({"error": "Missing 'url' in JSON payload"}), 400
@@ -50,24 +56,38 @@ def handle_scrape_request():
     if not url_to_scrape:
         return jsonify({"error": "'url' cannot be empty"}), 400
 
+    # Get depth parameter (default to 1)
+    scrape_depth = data.get('depth', 1)
+    try:
+        scrape_depth = int(scrape_depth)
+        if scrape_depth < 0:
+            scrape_depth = 0
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid depth value"}), 400
+
     # Basic URL validation (very simple)
     if not url_to_scrape.startswith(('http://', 'https://')):
          if '.' not in url_to_scrape: # Very basic check if it looks like a domain
               return jsonify({"error": "Invalid URL format"}), 400
          url_to_scrape = 'https://' + url_to_scrape # Attempt to fix if missing scheme
 
+    # Create new control object for this scrape
+    with control_lock:
+        current_scrape_control = ScrapeControl()
+        control = current_scrape_control
+
     # Run scraping in a background thread to avoid blocking the request
     # For production, consider a proper task queue (Celery, RQ)
-    logging.info(f"Received scrape request for: {url_to_scrape}")
+    logging.info(f"Received scrape request for: {url_to_scrape} (depth: {scrape_depth})")
     thread = threading.Thread(
         target=run_scrape_background,
-        args=(url_to_scrape, app.config['OUTPUT_DIR'], image_update_queue, IMAGE_SERVE_PATH, app.config['MAX_PAGES']) # Pass queue and serve path
+        args=(url_to_scrape, app.config['OUTPUT_DIR'], image_update_queue, IMAGE_SERVE_PATH, app.config['MAX_PAGES'], scrape_depth, control)
     )
     thread.start()
 
     return jsonify({"message": "Scraping process started. Updates will stream.", "url": url_to_scrape}), 202 # Status 202 Accepted
 
-def run_scrape_background(url, output_dir, update_queue, base_serve_path, max_pages):
+def run_scrape_background(url, output_dir, update_queue, base_serve_path, max_pages, depth, control):
     """Wrapper function to run scrape_site and handle results/errors in background."""
     logging.info(f"Background thread started for {url}")
     try:
@@ -80,7 +100,9 @@ def run_scrape_background(url, output_dir, update_queue, base_serve_path, max_pa
             image_update_queue=update_queue,
             base_image_serve_path=base_serve_path,
             follow_pagination=True, # Explicitly True as intended
-            max_pages=max_pages
+            max_pages=max_pages,
+            depth=depth,
+            control=control
         )
         logging.info(f"Background thread finished for {url}. Saved {count} images to {output_path}")
     except Exception as e:
@@ -88,6 +110,36 @@ def run_scrape_background(url, output_dir, update_queue, base_serve_path, max_pa
         # Ensure the end signal is sent even if the scraper crashes badly
         if update_queue:
             update_queue.put(None) # Signal end on error too
+
+@app.route('/scrape/pause', methods=['POST'])
+def pause_scrape():
+    """API endpoint to pause the current scraping operation."""
+    with control_lock:
+        if current_scrape_control:
+            current_scrape_control.pause()
+            return jsonify({"message": "Scraping paused"}), 200
+        else:
+            return jsonify({"error": "No active scraping session"}), 404
+
+@app.route('/scrape/resume', methods=['POST'])
+def resume_scrape():
+    """API endpoint to resume a paused scraping operation."""
+    with control_lock:
+        if current_scrape_control:
+            current_scrape_control.resume()
+            return jsonify({"message": "Scraping resumed"}), 200
+        else:
+            return jsonify({"error": "No active scraping session"}), 404
+
+@app.route('/scrape/stop', methods=['POST'])
+def stop_scrape():
+    """API endpoint to stop the current scraping operation."""
+    with control_lock:
+        if current_scrape_control:
+            current_scrape_control.stop()
+            return jsonify({"message": "Scraping stopped"}), 200
+        else:
+            return jsonify({"error": "No active scraping session"}), 404
 
 @app.route('/images/<path:domain_and_filename>')
 def serve_image(domain_and_filename):
