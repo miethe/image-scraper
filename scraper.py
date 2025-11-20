@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from collections import deque
 import logging
 from queue import Queue
+import threading
 
 # --- Configuration ---
 # Consider moving these to env variables or a config file
@@ -23,6 +24,44 @@ MIN_IMAGE_DIMENSION = 64 # Minimum width/height for non-SVG if detectable (heuri
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Scrape Control Class ---
+class ScrapeControl:
+    """Thread-safe control for scraping operations (pause/stop)."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._paused = False
+        self._stopped = False
+
+    def pause(self):
+        with self._lock:
+            self._paused = True
+            logging.info("Scraping paused")
+
+    def resume(self):
+        with self._lock:
+            self._paused = False
+            logging.info("Scraping resumed")
+
+    def stop(self):
+        with self._lock:
+            self._stopped = True
+            self._paused = False
+            logging.info("Scraping stopped")
+
+    def is_paused(self):
+        with self._lock:
+            return self._paused
+
+    def is_stopped(self):
+        with self._lock:
+            return self._stopped
+
+    def wait_if_paused(self):
+        """Blocks while paused, returns True if stopped."""
+        while self.is_paused():
+            time.sleep(0.5)
+        return self.is_stopped()
 
 # --- Robots.txt Handling ---
 robot_parsers = {} # Cache parsers per domain
@@ -63,34 +102,16 @@ def clean_image_url(url):
         'width', 'height', 'w', 'h', 'size', 'quality', 'q', 'fit', 'crop',
         'maxWidth', 'maxHeight', 'scale', 'res', 'resize', 'fm', 'format', 'auto', 'dpr'
     ]
-    # Common path segments indicating resizing (more aggressive)
-    path_resize_patterns = [
-        re.compile(r'_\d+x\d+(\.[a-zA-Z]+)$'), # _300x200.jpg
-        re.compile(r'/thumb/', re.IGNORECASE),    # /thumb/image.png
-        re.compile(r'/thumbnail/', re.IGNORECASE), # /thumbnail/image.png
-        re.compile(r'/preview/', re.IGNORECASE),  # /preview/image.jpg
-        re.compile(r'@[1-9]\.[0-9]+x', re.IGNORECASE) # Ali CDN @1.5x
-    ]
 
     try:
         parsed = urlparse(url)
         query_params = parse_qs(parsed.query)
 
         # Remove query parameters
-        original_query_count = len(query_params)
         query_params = {k: v for k, v in query_params.items() if k.lower() not in params_to_remove}
-
-        # Remove path segments (use with caution - might break URLs)
-        # Commented out by default - enable if needed and test carefully
-        # new_path = parsed.path
-        # for pattern in path_resize_patterns:
-        #     new_path = pattern.sub(r'\1', new_path) # Try removing size suffixes like _WxH.ext
-        #     new_path = re.sub(pattern, '/', new_path) # Try removing path segments like /thumb/
 
         # Reconstruct URL
         new_query = urlencode(query_params, doseq=True)
-        # Use original path unless path modification is enabled
-        # new_path = new_path if new_path != parsed.path else parsed.path # Check if path changed
         new_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
         if new_url != url:
@@ -101,13 +122,73 @@ def clean_image_url(url):
         logging.warning(f"Error cleaning URL {url}: {e}")
         return url # Return original if cleaning fails
 
+def try_get_high_res_image(session, url, timeout=DOWNLOAD_TIMEOUT):
+    """Attempts to fetch a higher resolution version of an image with fallback."""
+    # Try the cleaned URL first
+    cleaned_url = clean_image_url(url)
+
+    # List of variations to try (from most likely to work to least)
+    urls_to_try = [cleaned_url]
+
+    # If URL has common resize patterns in path, try variations
+    parsed = urlparse(cleaned_url)
+    path = parsed.path
+
+    # Try removing size suffixes like _300x200.jpg -> .jpg
+    size_pattern = re.compile(r'_\d+x\d+(\.[a-zA-Z]+)$')
+    if size_pattern.search(path):
+        new_path = size_pattern.sub(r'\1', path)
+        new_url = urlunparse((parsed.scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
+        if new_url not in urls_to_try:
+            urls_to_try.append(new_url)
+
+    # Try common high-res query parameters
+    if '?' in cleaned_url or '&' in cleaned_url:
+        # Some CDNs use explicit quality/size parameters
+        high_res_variants = []
+        base_url = cleaned_url.split('?')[0] if '?' in cleaned_url else cleaned_url
+
+        # Try common high-res patterns
+        for variant in [
+            f"{base_url}?quality=100",
+            f"{base_url}?w=2048",
+            f"{base_url}?size=large",
+        ]:
+            if variant not in urls_to_try:
+                high_res_variants.append(variant)
+
+        urls_to_try.extend(high_res_variants)
+
+    # Add original URL as final fallback
+    if url not in urls_to_try:
+        urls_to_try.append(url)
+
+    # Try each URL variation
+    for attempt_url in urls_to_try:
+        try:
+            logging.debug(f"Attempting to fetch: {attempt_url}")
+            response = session.get(attempt_url, timeout=timeout, stream=True)
+            response.raise_for_status()
+
+            # Success! Return this version
+            if attempt_url != url:
+                logging.info(f"Successfully fetched higher-res variant: {attempt_url}")
+            return response, attempt_url
+
+        except requests.exceptions.RequestException as e:
+            logging.debug(f"Failed to fetch {attempt_url}: {e}")
+            continue
+
+    # All attempts failed
+    return None, None
+
 # --- Image Hashing ---
 def get_image_hash(content):
     """Generates a SHA256 hash for the image content."""
     return hashlib.sha256(content).hexdigest()
 
 # --- Main Scraping Function ---
-def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_image_serve_path="/images", follow_pagination=True, max_pages=MAX_PAGES_TO_CRAWL):
+def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_image_serve_path="/images", follow_pagination=True, max_pages=MAX_PAGES_TO_CRAWL, depth=1, control: ScrapeControl = None):
     """
     Scrapes a website starting from start_url for images.
 
@@ -118,6 +199,8 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
         base_image_serve_path (str): The base HTTP path where images will be served from.
         follow_pagination (bool): Whether to follow links likely indicating pagination.
         max_pages (int): Maximum number of pages to crawl.
+        depth (int): Maximum link depth to follow (0=start page only, 1=start+direct links, etc.)
+        control (ScrapeControl, optional): Control object for pause/stop functionality.
     """
     if not start_url.startswith(('http://', 'https://')):
         start_url = 'https://' + start_url
@@ -129,8 +212,10 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
     domain_output_path = os.path.join(output_dir, base_domain)
     os.makedirs(domain_output_path, exist_ok=True)
     logging.info(f"Saving images to filesystem path: {domain_output_path}")
+    logging.info(f"Crawl depth limit: {depth}")
 
-    urls_to_visit = deque([start_url])
+    # Track URLs with their depth: (url, current_depth)
+    urls_to_visit = deque([(start_url, 0)])
     visited_urls = set([start_url])
     found_image_srcs = set() # Track image source URLs to avoid re-downloading based on URL
     downloaded_image_hashes = set() # Track hashes to avoid saving duplicates with different URLs
@@ -141,15 +226,22 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
 
     try:
         while urls_to_visit and pages_crawled < max_pages:
-            current_url = urls_to_visit.popleft()
-            # --- Skip if already visited (needed with potential queue additions) ---
-            if current_url in visited_urls and current_url != start_url: # Avoid re-processing
-                 logging.debug(f"Skipping already visited URL: {current_url}")
-                 continue
-            visited_urls.add(current_url) # Add here instead of when queueing
-            
+            # Check control state
+            if control:
+                if control.wait_if_paused():  # Returns True if stopped
+                    logging.info("Scraping stopped by user")
+                    break
+
+            current_url, current_depth = urls_to_visit.popleft()
+
+            # Skip if already visited (needed with potential queue additions)
+            if current_url in visited_urls and current_url != start_url:
+                logging.debug(f"Skipping already visited URL: {current_url}")
+                continue
+            visited_urls.add(current_url)
+
             pages_crawled += 1
-            logging.info(f"[{pages_crawled}/{max_pages}] Crawling: {current_url}")
+            logging.info(f"[{pages_crawled}/{max_pages}] Crawling (depth {current_depth}): {current_url}")
 
             # Respect robots.txt
             if not can_fetch(current_url):
@@ -215,8 +307,12 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
                     # --- Download Image ---
                     try:
                         logging.debug(f"Attempting to download: {cleaned_img_url}")
-                        img_response = session.get(cleaned_img_url, timeout=DOWNLOAD_TIMEOUT, stream=True)
-                        img_response.raise_for_status()
+                        # Try to get high-res version with fallback
+                        img_response, fetched_url = try_get_high_res_image(session, cleaned_img_url)
+
+                        if img_response is None:
+                            logging.warning(f"Failed to download image (all attempts): {cleaned_img_url}")
+                            continue
 
                         # Get filename and sanitize
                         img_filename_base = os.path.basename(urlparse(cleaned_img_url).path)
@@ -292,44 +388,49 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
                 logging.info(f"Found and processed {images_found_on_page} new images on {current_url}")
 
                 # --- Find Links (Internal & Pagination) ---
-                page_links = set()
-                for link in soup.find_all('a', href=True):
-                    href = link.get('href')
-                    if not href: continue
-                    abs_link = urljoin(current_url, href)
-                    parsed_link = urlparse(abs_link)
+                # Only follow links if we haven't reached depth limit
+                if current_depth < depth:
+                    next_depth = current_depth + 1
+                    page_links = set()
+                    for link in soup.find_all('a', href=True):
+                        href = link.get('href')
+                        if not href: continue
+                        abs_link = urljoin(current_url, href)
+                        parsed_link = urlparse(abs_link)
 
-                    # Stay on the same domain
-                    if parsed_link.netloc != base_domain:
-                        continue
+                        # Stay on the same domain
+                        if parsed_link.netloc != base_domain:
+                            continue
 
-                    # Clean fragment identifiers
-                    abs_link = urlunparse((parsed_link.scheme, parsed_link.netloc, parsed_link.path, parsed_link.params, parsed_link.query, ''))
+                        # Clean fragment identifiers
+                        abs_link = urlunparse((parsed_link.scheme, parsed_link.netloc, parsed_link.path, parsed_link.params, parsed_link.query, ''))
 
-                    # Basic check: is it a potential file download we don't want to crawl?
-                    if re.search(r'\.(pdf|zip|docx?|xlsx?|pptx?|exe|dmg|pkg|gz|rar)$', parsed_link.path, re.IGNORECASE):
-                        continue
+                        # Basic check: is it a potential file download we don't want to crawl?
+                        if re.search(r'\.(pdf|zip|docx?|xlsx?|pptx?|exe|dmg|pkg|gz|rar)$', parsed_link.path, re.IGNORECASE):
+                            continue
 
-                    
-                    # Add to queue if new and allowed
-                    if abs_link not in visited_urls and abs_link not in urls_to_visit: # Check both lists
-                        if len(urls_to_visit) + len(visited_urls) < max_pages:
-                            # Simple check: assume internal links are worth visiting for products/illustrations
-                            # Refine this logic based on observed patterns (e.g., '/product/', '/gallery/')
-                            is_potentially_interesting = True # Default to true for internal links
+                        # Add to queue if new and allowed
+                        if abs_link not in visited_urls:
+                            # Check if URL is already in queue
+                            already_queued = any(url == abs_link for url, _ in urls_to_visit)
+                            if not already_queued and len(urls_to_visit) + len(visited_urls) < max_pages:
+                                # Simple check: assume internal links are worth visiting for products/illustrations
+                                is_potentially_interesting = True # Default to true for internal links
 
-                            # Check pagination heuristic (as before)
-                            link_text = link.get_text(strip=True).lower()
-                            link_rel = link.get('rel', [])
-                            link_class = link.get('class', [])
-                            is_pagination = ('next' in link_text or '>' in link_text or '>>' in link_text or 'next' in link_rel or any('page' in c.lower() or 'pagin' in c.lower() or 'next' in c.lower() for c in link_class))
+                                # Check pagination heuristic (as before)
+                                link_text = link.get_text(strip=True).lower()
+                                link_rel = link.get('rel', [])
+                                link_class = link.get('class', [])
+                                is_pagination = ('next' in link_text or '>' in link_text or '>>' in link_text or 'next' in link_rel or any('page' in c.lower() or 'pagin' in c.lower() or 'next' in c.lower() for c in link_class))
 
-                            if follow_pagination and is_pagination:
-                                logging.debug(f"Queueing pagination link: {abs_link}")
-                                urls_to_visit.appendleft(abs_link) # Prioritize pagination
-                            elif is_potentially_interesting:
-                                logging.debug(f"Queueing internal link: {abs_link}")
-                                urls_to_visit.append(abs_link) # Add other links to the end
+                                if follow_pagination and is_pagination:
+                                    logging.debug(f"Queueing pagination link at depth {next_depth}: {abs_link}")
+                                    urls_to_visit.appendleft((abs_link, next_depth)) # Prioritize pagination
+                                elif is_potentially_interesting:
+                                    logging.debug(f"Queueing internal link at depth {next_depth}: {abs_link}")
+                                    urls_to_visit.append((abs_link, next_depth)) # Add other links to the end
+                else:
+                    logging.debug(f"Depth limit ({depth}) reached, not following links from {current_url}")
                         
                     # Also consider adding other internal links (optional - can broaden scope significantly)
                     # else:
