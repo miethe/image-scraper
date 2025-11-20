@@ -244,8 +244,9 @@ def scrape_site(start_url, output_dir, image_update_queue: Queue = None, base_im
                 found_image_srcs.add(img_url)
 
                 # Download and save the image
-                img_content, final_url = try_get_high_res_image(img_url, session)
-                if img_content:
+                img_response, final_url = try_get_high_res_image(session, img_url)
+                if img_response:
+                    img_content = img_response.content
                     img_hash = get_image_hash(img_content)
                     if img_hash not in downloaded_image_hashes:
                         downloaded_image_hashes.add(img_hash)
