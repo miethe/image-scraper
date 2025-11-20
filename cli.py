@@ -39,6 +39,12 @@ def main():
         default=logging.INFO,
         help="Increase output verbosity to DEBUG level."
     )
+    parser.add_argument(
+        "--browser",
+        action="store_true",
+        default=False,
+        help="Use browser automation for JavaScript-heavy sites with interactive galleries (slower but more comprehensive)."
+    )
 
     args = parser.parse_args()
 
@@ -49,13 +55,15 @@ def main():
     logging.info(f"Output directory: {args.output}")
     logging.info(f"Follow pagination: {args.pagination}")
     logging.info(f"Max pages: {args.max_pages}")
+    logging.info(f"Browser mode: {args.browser}")
 
     try:
         output_path, count = scrape_site(
             start_url=args.url,
             output_dir=args.output,
             follow_pagination=args.pagination,
-            max_pages=args.max_pages
+            max_pages=args.max_pages,
+            use_browser=args.browser
         )
         logging.info(f"CLI scrape finished. Saved {count} images to {output_path}")
     except Exception as e:

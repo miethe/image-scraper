@@ -5,3 +5,4 @@ lxml         # Often faster parser for BeautifulSoup
 urllib3      # Explicitly add for finer control/warnings later if needed
 python-dotenv # Good practice for managing env variables like output dir
 robotexclusionrulesparser # To respect robots.txt
+playwright   # Browser automation for JavaScript-heavy sites and interactive galleries
