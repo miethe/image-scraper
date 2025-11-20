@@ -500,7 +500,14 @@
 
             // Reset state
             messageDiv.style.display = 'none';
-            gallery.innerHTML = '';
+            gallery.innerHTML = `
+                <div class="empty-state">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    <p>No images yet. Enter a URL and start scraping!</p>
+                </div>
+            `;
             imageCount = 0;
             updateStats();
             submitButton.disabled = true;
@@ -567,7 +574,7 @@
 
             eventSource.addEventListener('end-stream', (event) => {
                 console.log("SSE end-stream event received:", event.data);
-                showMessage(`Scraping complete! Found ${imageCount} images.`, 'success');
+                showMessage(`Scraping complete! Received ${imageCount} images.`, 'success');
                 loadingIndicator.style.display = 'none';
                 statusTextEl.textContent = 'Complete';
                 resetForm();
@@ -599,7 +606,9 @@
 
             const img = document.createElement('img');
             img.src = imageUrl;
-            img.alt = "Scraped Image";
+            // Extract filename from imageUrl for better accessibility
+            const filename = imageUrl.split('/').pop().split('?')[0];
+            img.alt = `Scraped image: ${filename}`;
             img.loading = "lazy";
 
             img.onerror = () => {
@@ -617,11 +626,13 @@
             const viewLink = document.createElement('a');
             viewLink.href = imageUrl;
             viewLink.target = '_blank';
+            viewLink.rel = 'noopener noreferrer';
             viewLink.textContent = 'View';
 
             const downloadLink = document.createElement('a');
             downloadLink.href = imageUrl;
-            downloadLink.download = '';
+            const filename = imageUrl.split('/').pop().split('?')[0] || 'image';
+            downloadLink.download = filename;
             downloadLink.textContent = 'Download';
 
             actions.appendChild(viewLink);
